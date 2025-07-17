@@ -109,7 +109,7 @@ export function getReciprocalLatticeVectors(directLatticeVectorsCartesian) {
     return [aStar, bStar, cStar];
 }
 
-
+// getMillerIndicesFromCamera() function is AI generated
 /**
  * Converts a Cartesian vector (e.g., camera eye position) into Miller indices (hkl).
  * This finds the (hkl) plane whose normal is parallel to the Cartesian vector.
@@ -202,7 +202,7 @@ export function getMillerIndicesFromCamera(cameraEye, directLatticeVectorsCartes
 
 
 // Function to compute structure factor and plot them.
-export function performCrystallographicAnalysis(parsedData, inputPlaneStr, showMessage) {
+export function performCrystallographicAnalysis(parsedData, zoneAxisStr, showMessage, cameraState = null) {
     const { cellParameters, chemicalComponents, atomPositions, spaceGroupName } = parsedData;
     const { a: cellLengthA, b: cellLengthB, c: cellLengthC, alpha: cellAlphaAngle, beta: cellBetaAngle, gamma: cellGammaAngle } = cellParameters;
     const { elements = [] } = chemicalComponents;
@@ -211,12 +211,9 @@ export function performCrystallographicAnalysis(parsedData, inputPlaneStr, showM
         showMessage("Missing essential data for crystallographic analysis (atoms or cell parameters). Please upload a valid CIF file.", "error");
         return;
     }
-
-    // --- Correctly calculate Cartesian Direct Lattice Vectors ---
     const directLatticeVectorsCartesian = getDirectLatticeVectors(cellParameters);
     const [a_vec_cart, b_vec_cart, c_vec_cart] = directLatticeVectorsCartesian;
 
-    // --- Calculate Reciprocal Lattice Vectors from correct Cartesian direct vectors ---
     const reciprocalLatticeVectorsCartesian = getReciprocalLatticeVectors(directLatticeVectorsCartesian);
 
     if (!reciprocalLatticeVectorsCartesian) {
@@ -224,20 +221,21 @@ export function performCrystallographicAnalysis(parsedData, inputPlaneStr, showM
         return;
     }
     const [aStar, bStar, cStar] = reciprocalLatticeVectorsCartesian;
-    console.log("Reciprocal Lattice Vectors (a*, b*, c*):", reciprocalLatticeVectorsCartesian);
+    // console.log("Reciprocal Lattice Vectors (a*, b*, c*):", reciprocalLatticeVectorsCartesian);
 
-    // --- Calculate Structure Factors for all planes ---
-    const millerIndicesRangeH = [-5, 5];
-    const millerIndicesRangeK = [-5, 5];
-    const millerIndicesRangeL = [-25, 25];
+    // Calculate the kinematic structure factor
+    const k_max = 1 // Angstrom^-1, maximum reciprocal space vector length
+    const h_range = Math.ceil(k_max/dotProduct(aStar, aStar) ** 0.5);
+    const k_range = Math.ceil(k_max/dotProduct(bStar, bStar) ** 0.5);
+    const l_range = Math.ceil(k_max/dotProduct(cStar, cStar) ** 0.5);
 
     const listofPlanes = [];
     const structureFactors = {};
     const structureFactorMagnitudes = [];
 
-    for (let h = millerIndicesRangeH[0]; h <= millerIndicesRangeH[1]; h++) {
-        for (let k = millerIndicesRangeK[0]; k <= millerIndicesRangeK[1]; k++) {
-            for (let l = millerIndicesRangeL[0]; l <= millerIndicesRangeL[1]; l++) {
+    for (let h = -h_range; h <= h_range; h++) {
+        for (let k = -k_range; k <= k_range; k++) {
+            for (let l = -l_range; l <= l_range; l++) {
                 listofPlanes.push([h, k, l]);
 
                 let F_re = 0;
@@ -250,27 +248,27 @@ export function performCrystallographicAnalysis(parsedData, inputPlaneStr, showM
                 });
 
                 const magnitude = Math.sqrt(F_re ** 2 + F_im ** 2);
-                structureFactors[`${h},${k},${l}`] = magnitude;
+                structureFactors[`${h},${k},${l}`] = magnitude; //only storing and plotting magnitude |F|; maybe store |F|^2 instead?
                 structureFactorMagnitudes.push(magnitude);
             }
         }
     }
     // console.log("Calculated Structure Factors:", structureFactors);
 
-    // --- Visualization Data Preparation ---
-    let inputPlane = inputPlaneStr.split(',').map(Number); // Split by comma now
-    // Handle cases where input is "1,0,0" or "100" etc.
-    if (inputPlane.length !== 3 || inputPlane.some(isNaN) || inputPlane.every(val => val === 0)) {
+    // Prepare the data for plotting
+    let zoneAxis = zoneAxisStr.split(',').map(Number);
+    // Incorrect/wrong format input.
+    if (zoneAxis.length !== 3 || zoneAxis.some(isNaN) || zoneAxis.every(val => val === 0)) {
         console.warn("Invalid or zero Miller plane input, defaulting to [1,0,0].");
-        inputPlane = [1, 0, 0];
-        inputPlaneStr = "1,0,0"; // Update string if default is used
+        zoneAxis = [1, 0, 0];
+        zoneAxisStr = "1,0,0"; // Update string if default is used
     }
 
     // Calculate the reciprocal lattice vector G_hkl which is normal to the (hkl) plane
     const g_hkl = [
-        inputPlane[0] * aStar[0] + inputPlane[1] * bStar[0] + inputPlane[2] * cStar[0],
-        inputPlane[0] * aStar[1] + inputPlane[1] * bStar[1] + inputPlane[2] * cStar[1],
-        inputPlane[0] * aStar[2] + inputPlane[1] * bStar[2] + inputPlane[2] * cStar[2]
+        zoneAxis[0] * aStar[0] + zoneAxis[1] * bStar[0] + zoneAxis[2] * cStar[0],
+        zoneAxis[0] * aStar[1] + zoneAxis[1] * bStar[1] + zoneAxis[2] * cStar[1],
+        zoneAxis[0] * aStar[2] + zoneAxis[1] * bStar[2] + zoneAxis[2] * cStar[2]
     ];
     const normalPlaneVector = normalizeVector(g_hkl);
     // console.log("Normal vector to desired plane:", normalPlaneVector);
@@ -336,7 +334,7 @@ export function performCrystallographicAnalysis(parsedData, inputPlaneStr, showM
     const { a, b, c, alpha, beta, gamma } = cellParameters;
     const plotlyLayout = {
         title: {
-            text: `Crystal Structure (${inputPlaneStr} plane normal)<br>Space Group: ${spaceGroupName}`
+            text: `Crystal Structure (Zone axis: ${zoneAxisStr})<br>Space Group: ${spaceGroupName}`
         },
         legend: {
             font: {
@@ -344,10 +342,10 @@ export function performCrystallographicAnalysis(parsedData, inputPlaneStr, showM
             }
         },
         scene: {
-            // New: Set projection type to orthographic for better symmetry understanding
-            camera: {
+            aspectmode: 'data', // Ensures aspect ratio is based on actual data
+            camera: cameraState || {
                 projection: {
-                    type: 'orthographic' // Crucial for non-distorted view
+                    type: 'orthographic' 
                 },
                 // Initial camera eye is set to look along the normal, as before.
                 // This will be overridden by user interaction once plot loads.
@@ -356,21 +354,30 @@ export function performCrystallographicAnalysis(parsedData, inputPlaneStr, showM
                     y: normalPlaneVector[1] * 2,
                     z: normalPlaneVector[2] * 2
                 },
+                center: {
+                    x: 0,
+                    y: 0,
+                    z: 0
+                },
                 up: {
-                    x: xVector[0],
-                    y: xVector[1],
-                    z: xVector[2]
+                    x: 0,
+                    y: 0,
+                    z: 1
                 }
+                // up: {
+                //     x: xVector[0],
+                //     y: xVector[1],
+                //     z: xVector[2]
+                // }
             },
 
             xaxis: { visible: false }, // Use Angstroms for axis labels
             yaxis: { visible: false },
             zaxis: { visible: false },
-            aspectmode: 'data' // Important: ensures aspect ratio is based on actual data dimensions
         },
         // Prevent Plotly from showing specific modes by default, but allow full screen, etc.
         modebar: {
-            remove: ['zoom3d', 'pan3d', 'orbitRotation', 'tableRotation', 'resetCameraLastSave3d', 'hoverClosest3d', 'hoverCompare3d']
+            remove: ['zoom3d', 'pan3d', 'hoverClosest3d', 'hoverCompare3d']
         }
     };
 
@@ -422,9 +429,9 @@ export function performCrystallographicAnalysis(parsedData, inputPlaneStr, showM
             labelFormatter: function() { return ""; } // No labels
         },
         title: {
-            text: `Diffraction Pattern for (${inputPlaneStr}) plane`,
+            text: `Diffraction Pattern; Zone axis: (${zoneAxisStr})`,
             fontFamily: 'tahoma',
-            fontSize: 30
+            fontSize: 20
         },
         data: [{
             type: "scatter",
