@@ -1,23 +1,28 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Diffraction Pattern Simulator</title>
+    <title>Diffraction Pattern Simulator for Crystalline Material</title>
+    <link rel="icon" href="favicon.ico" type="image/x-icon">
+
+    <!-- External Libraries (CDNs) -->
     <script src="https://cdn.canvasjs.com/ga/canvasjs.min.js"></script>
     <script src="https://cdn.plot.ly/plotly-3.0.0.min.js" charset="utf-8"></script>
+    <script src='https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.17/d3.min.js'></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/14.0.1/math.js"></script>
 
+    <!-- Custom CSS -->
     <link rel="stylesheet" href="index.css"/>
   </head>
   <body>
 
-    <h1>Diffraction Pattern Simulator</h1>
+    <h1>Diffraction Pattern Simulator for Crystalline Material</h1>
     <p id="status">Upload a CIF file to begin.</p>
 
     <div class="input-section">
       <input type="file" id="cifFile" accept=".cif">
       <div class="plane-input-group">
-        <label for="planeInput">Miller Plane (h,k,l, e.g., 0,0,1):</label>
-        <input type="text" id="planeInput" value="0,0,1">
+        <label for="planeInput">Miller Plane (hkl, e.g., 001):</label>
+        <input type="text" id="planeInput" value="001">
         <button id="updatePlotButton">Update Diffraction View</button>
       </div>
     </div>
@@ -25,17 +30,20 @@
     <div id="message"></div>
 
     <div class="container">
+      <!-- Left Box: Crystal Structure Viewer -->
       <div class="box" id="structureViewer">
         <h2>Crystal Structure</h2>
         <div id="structureCanvas"></div>
       </div>
 
+      <!-- Right Box: Diffraction Pattern -->
       <div class="box" id="diffractionPattern">
         <h2>Diffraction Pattern</h2>
         <div id="diffractionCanvas"></div>
       </div>
     </div>
 
+    <!-- Elements to display extracted CIF info -->
     <div class="cif-summary">
         <h3>CIF Summary:</h3>
         <p><strong>Space Group:</strong> <span id="displaySpaceGroup">N/A</span></p>
@@ -51,6 +59,8 @@
         </ul>
     </div>
 
+    <!-- Your JavaScript Modules -->
+    <!-- Order matters: parseCIF and performCrystallographicAnalysis must be loaded before main.js if main.js imports them -->
     <script type="module" src="main.js"></script>
   </body>
 </html>

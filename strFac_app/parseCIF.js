@@ -15,8 +15,7 @@ export function parseCifInfo(cifInfo) {
     cellParameters: {},
     chemicalComponents: {},
     atomPositions: [],
-    spaceGroupName: "N/A",
-    spaceGroupNumber: "N/A"
+    spaceGroupName: "N/A"
   };
 
   // --- Parse Space Group Name ---
@@ -31,71 +30,30 @@ export function parseCifInfo(cifInfo) {
       console.warn("Could not find _space_group_name_H-M_alt or _space_group_name_Hall tag.");
   }
 
-  // --- Parse Space Group Number ---
-  const spaceGroupNumberMatch = cifInfo.match(/_space_group_IT_number\s+(\d+)/);
-  if (spaceGroupNumberMatch && spaceGroupNumberMatch[1]) {
-    data.spaceGroupNumber = parseInt(spaceGroupNumberMatch[1], 10);
-  } else {
-    console.warn("Could not find _space_group_IT_number tag.");
-  }
 
-
-//   // --- Parse Chemical Components ---
-//   const formulaMatch = cifInfo.match(/_chemical_formula_structural\s+'([^']+)'/);
-//   if (formulaMatch && formulaMatch[1]) {
-//     const formulaString = formulaMatch[1].trim();
-//     const elementRegex = /([A-Z][a-z]*)(\d*)/g;
-//     let match;
-//     const elementsFound = [];
-//     while ((match = elementRegex.exec(formulaString)) !== null) {
-//       elementsFound.push({
-//         element: match[1],
-//         number: match[2] ? parseInt(match[2], 10) : 1
-//       });
-//     }
-
-//     if (elementsFound.length > 0) {
-//       data.chemicalComponents.element1 = elementsFound[0].element;
-//       if (elementsFound.length > 1) {
-//         data.chemicalComponents.element2 = elementsFound[1].element;
-//       }
-//     }
-//   } else {
-//     console.warn("Could not find _chemical_formula_structural tag. Chemical components might be missing.");
-//   }
-
-// --- Parse Chemical Components ---
-    const formulaMatch = cifInfo.match(/_chemical_formula_structural\s+'([^']+)'/);
-    if (formulaMatch && formulaMatch[1]) {
+  // --- Parse Chemical Components ---
+  const formulaMatch = cifInfo.match(/_chemical_formula_structural\s+'([^']+)'/);
+  if (formulaMatch && formulaMatch[1]) {
     const formulaString = formulaMatch[1].trim();
-
-    // Match element symbols (e.g. "Te", "Gd") and optional counts (e.g. "3")
-    const elementRegex = /([A-Z][a-z]*)(\d*\.?\d*)/g;
-
+    const elementRegex = /([A-Z][a-z]*)(\d*)/g;
     let match;
     const elementsFound = [];
-
     while ((match = elementRegex.exec(formulaString)) !== null) {
-        const element = match[1];
-        const count = match[2] ? parseFloat(match[2]) : 1;
-        elementsFound.push({ element, number: count });
+      elementsFound.push({
+        element: match[1],
+        number: match[2] ? parseInt(match[2], 10) : 1
+      });
     }
 
-    // Store as an array (general case)
-    data.chemicalComponents.elements = elementsFound;
-
-    // Optionally for backward compatibility:
     if (elementsFound.length > 0) {
-        data.chemicalComponents.element1 = elementsFound[0].element;
-    }
-    if (elementsFound.length > 1) {
+      data.chemicalComponents.element1 = elementsFound[0].element;
+      if (elementsFound.length > 1) {
         data.chemicalComponents.element2 = elementsFound[1].element;
+      }
     }
-
-    } else {
+  } else {
     console.warn("Could not find _chemical_formula_structural tag. Chemical components might be missing.");
-    }
-
+  }
 
 
   // --- Parse Cell Parameters ---
@@ -111,114 +69,112 @@ export function parseCifInfo(cifInfo) {
   data.cellParameters.beta = parseCellParam('_cell_angle_beta');
   data.cellParameters.gamma = parseCellParam('_cell_angle_gamma');
 
+  // --- Find Atom Site Loop Start (More Robustly) ---
+  let atomSiteLoopStart = -1;
+  const cifLines = cifInfo.split('\n'); // Split the whole CIF into lines
 
-  // Parse symmetry operations
-    const SYMMETRY_TAGS = [
-        '_space_group_symop_operation_xyz',
-        '_symmetry_equiv_pos_as_xyz',
-        '_symmetry_equiv_pos_xyz',
-    ];
-    let symmetryOperations = [];
-    const cifLines = cifInfo.split('\n').map(line => line.trim()); //Split the CIF file into lines and trim whitespace
-    // console.log("CIF Lines:", cifLines);
-    let symmetryLoopStartIndex = -1;
-    let foundSymmetryTag = '';
-    let symmetryTagIndex = -1;
-    
-    for (let i = 0; i < cifLines.length; i++) {
-        // console.log("Line read:", cifLines[i]);
-        if (cifLines[i].toLowerCase() === 'loop_') {
-            // console.log("Found loop beginning:", cifLines[i]);
-            let j = i+1;
-            let tags = [];
-            while (j < cifLines.length && cifLines[j].startsWith('_')) {
-                // console.log("Found symmetry tag:", cifLines[j]);
-                tags.push(cifLines[j]);
-                j++;
-            }
-            for (const tag of SYMMETRY_TAGS) {
-                const index = tags.indexOf(tag);
-                if (index !== -1) {
-                    symmetryLoopStartIndex = i;
-                    symmetryTagIndex = index;
-                    foundSymmetryTag = tag;
-                    break;
-                }
-            }
-            if (symmetryLoopStartIndex !== -1) break; // Found the loop, exit outer loop
-        }
-    }
-    
-    if (symmetryLoopStartIndex !== -1 && foundSymmetryTag) {
-        let dataLines = [];
-        for (let i = symmetryLoopStartIndex + 1; i < cifLines.length; i++) {
-            const line = cifLines[i];
-            // console.log("Processing symmetry line:", line);
-            if (line.startsWith('_')) continue;
-            if (line.toLowerCase().startsWith('loop_') || line.startsWith('#') || line.trim() === '') break; // End of symmetry data
-            dataLines.push(line);
-        }
+  for (let i = 0; i < cifLines.length; i++) {
+      const trimmedLine = cifLines[i].trim();
+      if (trimmedLine === 'loop_') {
+          // Check next few lines for _atom_site_ tag
+          for (let j = i + 1; j < Math.min(i + 10, cifLines.length); j++) { // Check up to 10 lines after loop_
+              if (cifLines[j].trim().startsWith('_atom_site_')) {
+                  atomSiteLoopStart = cifInfo.indexOf('loop_', cifInfo.indexOf(cifLines[i])); // Get precise index of THIS loop_
+                  break;
+              }
+          }
+      }
+      if (atomSiteLoopStart !== -1) break; // Found the loop, exit outer loop
+  }
 
-        for (const line of dataLines) {
-            const parts = [];
-            const regex = /'[^']*'|"[^"]*"|\S+/g;
-            let match;
-            while ((match = regex.exec(line)) !== null) {
-                parts.push(match[0]);
-            }
-            if (parts.length > symmetryTagIndex)  {
-                let op = parts[symmetryTagIndex].trim();
-                if (op.startsWith("'") && op.endsWith("'") || op.startsWith('"') && op.endsWith('"')) {
-                    op = op.substring(1, op.length - 1); // Remove quotes
-                }
-                if (op) symmetryOperations.push(op);
-            }
-        }
+  // --- Parse Symmetry Operations ---
+  const SYMMETRY_TAGS = [
+    '_space_group_symop_operation_xyz',
+    '_symmetry_equiv_pos_as_xyz'
+  ];
+
+  let symmetryLoopStartIndex = -1;
+  let foundSymmetryTag = '';
+  let symmetryOperations = [];
+
+  // Define the block to search for symmetry operations (from start of file up to atom site loop)
+  const potentialSymmetryBlock = cifInfo.substring(0, atomSiteLoopStart !== -1 ? atomSiteLoopStart : cifInfo.length);
+
+  for (const tag of SYMMETRY_TAGS) {
+    const symmLoopMatch = potentialSymmetryBlock.match(new RegExp(`loop_\\s*(_[^\\s]+\\s*)*${tag}`));
+    if (symmLoopMatch) {
+      symmetryLoopStartIndex = cifInfo.indexOf(symmLoopMatch[0]);
+      foundSymmetryTag = tag;
+      break;
     }
+  }
+
+  if (symmetryLoopStartIndex !== -1 && foundSymmetryTag) {
+    const symmBlock = cifInfo.substring(symmetryLoopStartIndex, atomSiteLoopStart !== -1 ? atomSiteLoopStart : cifInfo.length);
+    const symmLines = symmBlock.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+
+    let symmDataStartsIndex = -1;
+    for (let i = 0; i < symmLines.length; i++) {
+      if (symmLines[i].includes(foundSymmetryTag)) {
+        symmDataStartsIndex = i + 1;
+        while (symmDataStartsIndex < symmLines.length && symmLines[symmDataStartsIndex].startsWith('_')) {
+             symmDataStartsIndex++;
+        }
+        break;
+      }
+    }
+
+    if (symmDataStartsIndex !== -1) {
+      for (let i = symmDataStartsIndex; i < symmLines.length; i++) {
+        const line = symmLines[i];
+        if (line.startsWith('#') || line.startsWith('_') || line.startsWith('loop_') || line.trim() === '') {
+          break;
+        }
+        const parts = line.split(/\s+/).filter(Boolean);
+        if (parts.length > 0) {
+            let op = '';
+            if (parts.length > 1 && !isNaN(Number(parts[0])) && Number.isFinite(Number(parts[0]))) {
+                op = parts[1];
+            } else {
+                op = parts[0];
+            }
+
+            if (op.startsWith("'") && op.endsWith("'")) {
+                op = op.substring(1, op.length - 1);
+            }
+            if (op) symmetryOperations.push(op);
+        }
+      }
+    }
+  }
 
   if (symmetryOperations.length === 0) {
     console.warn("No symmetry operations found or parsed from CIF, defaulting to 'x,y,z'.");
     symmetryOperations = ["x,y,z"];
   }
-//   console.log("Parsed Symmetry Operations:", symmetryOperations);
+  console.log("Parsed Symmetry Operations:", symmetryOperations);
 
 
-// Parse Atomic Positions
-  let atomSiteLoopStart = -1;
-
-  for (let i = 0; i < cifLines.length; i++) {
-    if(cifLines[i] === 'loop_') {
-        for (let j = i + 1; j < Math.min(i + 10, cifLines.length); j++) { // Check next few lines for _atom_site_ tag
-            if (cifLines[j].startsWith('_atom_site_')) {
-                atomSiteLoopStart = i; // Get precise index of THIS loop_
-                break;
-            }
-        }
-    }
-    if (atomSiteLoopStart !== -1) break; // Found the loop, exit outer loop
-  }
-
+  // --- Parse Atomic Positions ---
   if (atomSiteLoopStart === -1) {
     console.error("Could not find the 'loop_' for atomic position data containing '_atom_site_' tags. Cannot parse atomic positions.");
     return null;
   }
 
-    const atomSiteBlock = cifLines.slice(atomSiteLoopStart); //new
-    // console.log("Atom Site Block:", atomSiteBlock);
+  const atomSiteBlock = cifInfo.substring(atomSiteLoopStart);
+  const lines = atomSiteBlock.split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
   let labels = [];
   let dataStartsIndex = -1;
 
-  for (let i = 0; i < atomSiteBlock.length; i++) {
-    const line = atomSiteBlock[i];
-    if (line.startsWith('_atom_site_')) {
-        labels.push(line.replace('_atom_site_', '').trim());
-    } 
-    else if (labels.length > 0 && !line.startsWith('#') && !line.startsWith('loop_') ){
-        dataStartsIndex = i;
-        break; // Found the start of data lines after headers
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('_atom_site_')) {
+      labels.push(lines[i].substring(lines[i].indexOf('_atom_site_') + '_atom_site_'.length));
+    } else if (labels.length > 0 && !lines[i].startsWith('#') && !lines[i].startsWith('loop_') && lines[i].trim() !== '') {
+      dataStartsIndex = i;
+      break;
     }
-}
+  }
 
   if (dataStartsIndex === -1) {
     console.warn("Could not find start of atomic position data lines after headers for _atom_site_ loop.");
@@ -231,15 +187,15 @@ export function parseCifInfo(cifInfo) {
   const labelIndex = labels.indexOf('label');
 
   if (xIndex === -1 || yIndex === -1 || zIndex === -1) {
-    console.error("Missing fractional coordinate headers (_atom_site_fract_x,y,y) in atom_site loop. Cannot parse atomic positions.");
+    console.error("Missing fractional coordinate headers (_atom_site_fract_x,y,z) in atom_site loop. Cannot parse atomic positions.");
     return null;
   }
   if (labelIndex === -1) {
       console.warn("'_atom_site_label' not found. Atom labels might be incorrect.");
   }
 
-  // Extract atom data lines, filtering out comments and empty lines
-  const atomDataLines = atomSiteBlock.slice(dataStartsIndex).filter(line => !line.startsWith('#') && !line.startsWith('_') && !line.startsWith('loop_') && line.trim() !== '');
+
+  const atomDataLines = lines.slice(dataStartsIndex).filter(line => !line.startsWith('#') && !line.startsWith('_') && !line.startsWith('loop_') && line.trim() !== '');
 
   if (atomDataLines.length === 0) {
       console.warn("Atom data lines extracted but appear to be empty or only contain comments/tags after filtering.");
@@ -247,9 +203,8 @@ export function parseCifInfo(cifInfo) {
   }
 
   for (let i = 0; i < atomDataLines.length; i++) {
-    const parts = atomDataLines[i].split(/\s+/).filter(Boolean); // \s is any whitespace character, + means one or more, filter(Boolean) removes empty strings
+    const parts = atomDataLines[i].split(/\s+/).filter(Boolean);
 
-    // Determine atom label from _atom_site_label; can use this later for atomic scattering factors
     if (parts.length > Math.max(xIndex, yIndex, zIndex)) {
       let currentAtomLabel = 'Unknown';
       if (labelIndex !== -1 && parts[labelIndex]) {
@@ -258,7 +213,6 @@ export function parseCifInfo(cifInfo) {
           currentAtomLabel = parts[0];
       }
 
-      // Extract fractional atomic coordinates
       const initialCoords = {
         x: Number(parts[xIndex].split('(')[0]),
         y: Number(parts[yIndex].split('(')[0]),
@@ -270,7 +224,6 @@ export function parseCifInfo(cifInfo) {
           continue;
       }
 
-    // Extract chemical element from the label, eg. Te1 -> Te
       let actualElementType = currentAtomLabel.match(/([A-Z][a-z]*)/);
       actualElementType = actualElementType ? actualElementType[1] : 'Unknown';
 
@@ -282,14 +235,15 @@ export function parseCifInfo(cifInfo) {
           }
       }
 
-      // Now apply symmetry operations to the original coordinates and get complete list of positions
-      symmetryOperations.forEach(opString => { // i.e., for each symmetry operation...
+
+      symmetryOperations.forEach(opString => {
         let x_new, y_new, z_new;
         try {
+            // mathjs is loaded globally in index.html, so it should be available here
             const scope = { x: initialCoords.x, y: initialCoords.y, z: initialCoords.z };
             const ops = opString.split(',').map(s => s.trim());
 
-            x_new = math.evaluate(ops[0], scope); // math.evaluate("x+1/2", 0.3) = 0.3 + 1/2 = 0.8
+            x_new = math.evaluate(ops[0], scope);
             y_new = math.evaluate(ops[1], scope);
             z_new = math.evaluate(ops[2], scope);
 
@@ -297,10 +251,10 @@ export function parseCifInfo(cifInfo) {
             console.error(`Error evaluating symmetry operation '${opString}' for atom ${currentAtomLabel}:`, e);
             return;
         }
-        // Reduce coordinates to the unit cell (0-1 range)
-        x_new = (x_new % 1 + 1) % 1;
-        y_new = (y_new % 1 + 1) % 1;
-        z_new = (z_new % 1 + 1) % 1;
+
+        x_new = (x_new % 1 + 1) % 1; // Ensure 0 <= x < 1
+        y_new = (y_new % 1 + 1) % 1; // Ensure 0 <= y < 1
+        z_new = (z_new % 1 + 1) % 1; // Ensure 0 <= z < 1
 
         data.atomPositions.push({
           x: x_new,
@@ -313,6 +267,6 @@ export function parseCifInfo(cifInfo) {
         console.warn(`Skipping malformed atom line (not enough parts): ${atomDataLines[i]}`);
     }
   }
-  console.log('Parsed CIF data:', data);
+
   return data;
 }

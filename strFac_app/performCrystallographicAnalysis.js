@@ -1,241 +1,106 @@
 // performCrystallographicAnalysis.js
 
-//Helper Functions (local to this js file)
-function crossProduct(v1, v2) {
-    return [
-        v1[1] * v2[2] - v1[2] * v2[1],
-        v1[2] * v2[0] - v1[0] * v2[2],
-        v1[0] * v2[1] - v1[1] * v2[0]
-    ];
-}
-
-function dotProduct(v1, v2) {
-    return v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
-}
-
-function multiplyMatrices(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b) || !a.length || !b.length || !a[0].length || !b[0].length) {
-       // console.error('Arguments should be non-empty 2-dimensional arrays for matrix multiplication.');
-       return [];
-    }
-    const x = a.length;
-    const z = a[0].length;
-    const y = b[0].length;
-    if (b.length !== z) {
-       // console.error('Number of columns in the first matrix must match number of rows in the second.');
-       return [];
-    }
-
-    const product = Array(x).fill(0).map(() => Array(y).fill(0));
-
-    for (let i = 0; i < x; i++) {
-       for (let j = 0; j < y; j++) {
-          for (let k = 0; k < z; k++) {
-             product[i][j] += a[i][k] * b[k][j];
-          }
-       }
-    }
-    return product;
-}
-
-function normalizeVector(v) {
-    const magnitude = Math.sqrt(v.reduce((sum, val) => sum + val * val, 0));
-    if (magnitude === 0) return [0, 0, 0];
-    return v.map(val => val / magnitude);
-}
-
-// Function to calculate inverse of a 3x3 matrix
-function matrixInverse3x3(m) {
-    const [[a, b, c], [d, e, f], [g, h, i]] = m;
-
-    const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    if (det === 0) {
-        // console.error("Matrix is singular, cannot invert.");
-        return null;
-    }
-
-    const invDet = 1 / det;
-
-    return [
-        [(e * i - f * h) * invDet, (c * h - b * i) * invDet, (b * f - c * e) * invDet],
-        [(f * g - d * i) * invDet, (a * i - c * g) * invDet, (c * d - a * f) * invDet],
-        [(d * h - e * g) * invDet, (b * g - a * h) * invDet, (a * e - b * d) * invDet]
-    ];
-}
-
-
-// Get real-space lattice vectors for any crystal family
-export function getDirectLatticeVectors(cellParameters) {
-    const { a, b, c, alpha, beta, gamma } = cellParameters;
-
-    const alphaRad = alpha * Math.PI / 180;
-    const betaRad = beta * Math.PI / 180;
-    const gammaRad = gamma * Math.PI / 180;
-
-    // Using triclinic for generality: See https://www.aflowlib.org/prototype-encyclopedia/triclinic_lattice.html
-    const a_vec = [a, 0, 0];
-    const b_vec = [b*Math.cos(gammaRad), b*Math.sin(gammaRad), 0];
-
-    let c_x, c_y, c_z;
-    c_x = c*Math.cos(betaRad);
-    c_y = (c*(Math.cos(alphaRad)-Math.cos(betaRad)*Math.cos(gammaRad)))/Math.sin(gamma)
-    c_z = Math.sqrt(c*c - c_x*c_x - c_y*c_y);
-    const c_vec = [c_x, c_y, c_z];
-
-    return [a_vec, b_vec, c_vec];
-}
-
-
-// Get reciprocal lattice vectors from direct lattice vectors
-export function getReciprocalLatticeVectors(directLatticeVectorsCartesian) {
-    const [a_vec, b_vec, c_vec] = directLatticeVectorsCartesian;
-
-    const bCrossC = crossProduct(b_vec, c_vec);
-    const cCrossA = crossProduct(c_vec, a_vec);
-    const aCrossB = crossProduct(a_vec, b_vec);
-
-    const vol = dotProduct(a_vec, bCrossC); // Unit cell volume
-
-    if (vol === 0) {
-        // This should be handled before calling this function in main.js
-        console.error("Unit cell volume is zero, cannot calculate reciprocal lattice vectors.");
-        return null;
-    }
-
-    const aStar = bCrossC.map(x => x / vol);
-    const bStar = cCrossA.map(x => x / vol);
-    const cStar = aCrossB.map(x => x / vol);
-
-    return [aStar, bStar, cStar];
-}
-
-// getMillerIndicesFromCamera() function is AI generated
-/**
- * Converts a Cartesian vector (e.g., camera eye position) into Miller indices (hkl).
- * This finds the (hkl) plane whose normal is parallel to the Cartesian vector.
- *
- * @param {object} cameraEye - Plotly camera eye object {x, y, z}.
- * @param {Array<Array<number>>} directLatticeVectorsCartesian - [a_vec_cart, b_vec_cart, c_vec_cart]
- * @param {Array<Array<number>>} reciprocalLatticeVectorsCartesian - [aStar, bStar, cStar]
- * @returns {Array<number>} - [h, k, l] Miller indices as integers, or null if calculation fails.
- */
-export function getMillerIndicesFromCamera(cameraEye, directLatticeVectorsCartesian, reciprocalLatticeVectorsCartesian) {
-    const V_cart = [cameraEye.x, cameraEye.y, cameraEye.z]; // The view direction (normal to screen)
-
-    // The reciprocal lattice vectors a*, b*, c* (in Cartesian coordinates) form a matrix M_reciprocal:
-    // [ aStar[0] bStar[0] cStar[0] ]
-    // [ aStar[1] bStar[1] cStar[1] ]
-    // [ aStar[2] bStar[2] cStar[2] ]
-    // A reciprocal lattice vector G_hkl_cart = M_reciprocal * [h, k, l]^T
-    // To find [h, k, l]^T from G_hkl_cart, we need [h, k, l]^T = M_reciprocal_inv * G_hkl_cart^T
-
-    // The vector V_cart is proportional to the reciprocal lattice vector G_hkl for the plane (hkl).
-    // So, we need to convert V_cart (Cartesian) to its components in the reciprocal basis.
-
-    // Method: The transpose of the matrix of direct lattice vectors maps reciprocal components to Cartesian space.
-    // The inverse of the reciprocal lattice matrix (M_reciprocal_cartesian) maps Cartesian space to reciprocal components.
-
-    // Let M_reciprocal_cartesian be:
-    // [[aStar[0], bStar[0], cStar[0]],
-    //  [aStar[1], bStar[1], cStar[1]],
-    //  [aStar[2], bStar[2], cStar[2]]]
-    const M_reciprocal_cartesian = [
-        [reciprocalLatticeVectorsCartesian[0][0], reciprocalLatticeVectorsCartesian[1][0], reciprocalLatticeVectorsCartesian[2][0]],
-        [reciprocalLatticeVectorsCartesian[0][1], reciprocalLatticeVectorsCartesian[1][1], reciprocalLatticeVectorsCartesian[2][1]],
-        [reciprocalLatticeVectorsCartesian[0][2], reciprocalLatticeVectorsCartesian[1][2], reciprocalLatticeVectorsCartesian[2][2]]
-    ];
-
-    const M_reciprocal_cartesian_inv = matrixInverse3x3(M_reciprocal_cartesian);
-
-    if (!M_reciprocal_cartesian_inv) {
-        console.error("Could not invert reciprocal lattice matrix to determine hkl.");
-        return null;
-    }
-
-    // Now, multiply the inverse matrix by the Cartesian vector V_cart to get h, k, l
-    // [h, k, l]^T = M_reciprocal_cartesian_inv * V_cart^T
-    const hkl_float = multiplyMatrices(M_reciprocal_cartesian_inv, [[V_cart[0]], [V_cart[1]], [V_cart[2]]]);
-
-    if (!hkl_float || hkl_float.length !== 3 || hkl_float[0].length !== 1) {
-        console.error("Matrix multiplication failed for hkl derivation.");
-        return null;
-    }
-
-    // Extract h, k, l and normalize to smallest integers
-    let h = hkl_float[0][0];
-    let k = hkl_float[1][0];
-    let l = hkl_float[2][0];
-
-    // Normalize to smallest integers
-    const tolerance = 1e-6; // Tolerance for considering a number close to zero
-    h = Math.abs(h) < tolerance ? 0 : h;
-    k = Math.abs(k) < tolerance ? 0 : k;
-    l = Math.abs(l) < tolerance ? 0 : l;
-
-    if (h === 0 && k === 0 && l === 0) {
-        return [0, 0, 0]; // Special case: no defined plane
-    }
-
-    // Find the greatest common divisor to normalize to integers
-    // Use math.gcd if available, otherwise implement simple GCD
-    const values = [Math.round(h * 1000), Math.round(k * 1000), Math.round(l * 1000)]; // Multiply by a factor to convert to integers for GCD
-    const commonDivisor = math.gcd(math.gcd(values[0], values[1]), values[2]);
-
-    if (commonDivisor === 0) { // Avoid division by zero if all values are effectively zero
-        return [0, 0, 0];
-    }
-
-    const h_int = Math.round(h / (commonDivisor / 1000));
-    const k_int = Math.round(k / (commonDivisor / 1000));
-    const l_int = Math.round(l / (commonDivisor / 1000));
-
-    // Ensure the first non-zero index is positive if not all are zero
-    if (!(h_int === 0 && k_int === 0 && l_int === 0)) {
-        if (h_int < 0 || (h_int === 0 && k_int < 0) || (h_int === 0 && k_int === 0 && l_int < 0)) {
-            return [-h_int, -k_int, -l_int]; // Flip sign to ensure positive first non-zero index
-        }
-    }
-
-    return [h_int, k_int, l_int];
-}
-
-
-
-// Function to compute structure factor and plot them.
-export function performCrystallographicAnalysis(parsedData, zoneAxisStr, showMessage, cameraState = null) {
+// This function performs the crystallographic calculations and updates the plots.
+// It receives the parsed data from parseCIF.js and the plane input from main.js.
+// It also receives the showMessage function for displaying errors/status.
+export function performCrystallographicAnalysis(parsedData, inputPlaneStr, showMessage) {
+    // Destructure the necessary data from the parsedData object
     const { cellParameters, chemicalComponents, atomPositions, spaceGroupName } = parsedData;
     const { a: cellLengthA, b: cellLengthB, c: cellLengthC, alpha: cellAlphaAngle, beta: cellBetaAngle, gamma: cellGammaAngle } = cellParameters;
-    const { elements = [] } = chemicalComponents;
+    const { element1, element2 } = chemicalComponents;
 
     if (atomPositions.length === 0 || !cellLengthA || !cellLengthB || !cellLengthC) {
         showMessage("Missing essential data for crystallographic analysis (atoms or cell parameters). Please upload a valid CIF file.", "error");
         return;
     }
-    const directLatticeVectorsCartesian = getDirectLatticeVectors(cellParameters);
-    const [a_vec_cart, b_vec_cart, c_vec_cart] = directLatticeVectorsCartesian;
 
-    const reciprocalLatticeVectorsCartesian = getReciprocalLatticeVectors(directLatticeVectorsCartesian);
+    // --- Helper Math Functions (private to this module) ---
+    function crossProduct(v1, v2) {
+        return [
+            v1[1] * v2[2] - v1[2] * v2[1],
+            v1[2] * v2[0] - v1[0] * v2[2],
+            v1[0] * v2[1] - v1[1] * v2[0]
+        ];
+    }
 
-    if (!reciprocalLatticeVectorsCartesian) {
-        showMessage("Failed to calculate reciprocal lattice vectors. Check console for details.", "error");
+    function dotProduct(v1, v2) {
+        return v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
+    }
+
+    const multiplyMatrices = (a, b) => {
+        if (!Array.isArray(a) || !Array.isArray(b) || !a.length || !b.length || !a[0].length || !b[0].length) {
+           // console.error('Arguments should be non-empty 2-dimensional arrays for matrix multiplication.');
+           return []; // Return empty array or throw specific error
+        }
+        const x = a.length;
+        const z = a[0].length;
+        const y = b[0].length;
+        if (b.length !== z) {
+           // console.error('Number of columns in the first matrix must match number of rows in the second.');
+           return []; // Return empty array or throw specific error
+        }
+
+        const product = Array(x).fill(0).map(() => Array(y).fill(0));
+
+        for (let i = 0; i < x; i++) {
+           for (let j = 0; j < y; j++) {
+              for (let k = 0; k < z; k++) {
+                 product[i][j] += a[i][k] * b[k][j];
+              }
+           }
+        }
+        return product;
+    };
+
+    function normalizeVector(v) {
+        const magnitude = Math.sqrt(v.reduce((sum, val) => sum + val * val, 0));
+        if (magnitude === 0) return [0, 0, 0];
+        return v.map(val => val / magnitude);
+    }
+
+    // --- Reciprocal Lattice Vectors ---
+    // Convert angles to radians
+    const alphaRad = cellAlphaAngle * Math.PI / 180;
+    const betaRad = cellBetaAngle * Math.PI / 180;
+    const gammaRad = cellGammaAngle * Math.PI / 180;
+
+    // Direct lattice vectors (simplified Cartesian for this example, as in original code)
+    // IMPORTANT: For non-orthorhombic cells (like monoclinic in your example),
+    // a more rigorous conversion from cell parameters to Cartesian vectors is needed
+    // to accurately calculate reciprocal lattice vectors.
+    // The current simplified vectors assume orthogonal axes, which is an approximation
+    // for monoclinic or triclinic systems in this context.
+    let a_vec = [cellLengthA, 0, 0];
+    let b_vec = [0, cellLengthB, 0];
+    let c_vec = [0, 0, cellLengthC];
+
+    let bCrossC = crossProduct(b_vec, c_vec);
+    let vol = dotProduct(a_vec, bCrossC);
+
+    if (vol === 0) {
+        showMessage("Unit cell volume is zero, cannot calculate reciprocal lattice vectors.", "error");
         return;
     }
-    const [aStar, bStar, cStar] = reciprocalLatticeVectorsCartesian;
-    // console.log("Reciprocal Lattice Vectors (a*, b*, c*):", reciprocalLatticeVectorsCartesian);
 
-    // Calculate the kinematic structure factor
-    const k_max = 1 // Angstrom^-1, maximum reciprocal space vector length
-    const h_range = Math.ceil(k_max/dotProduct(aStar, aStar) ** 0.5);
-    const k_range = Math.ceil(k_max/dotProduct(bStar, bStar) ** 0.5);
-    const l_range = Math.ceil(k_max/dotProduct(cStar, cStar) ** 0.5);
+    let aStar = bCrossC.map(x => x / vol);
+    let bStar = crossProduct(c_vec, a_vec).map(x => x / vol);
+    let cStar = crossProduct(a_vec, b_vec).map(x => x / vol);
+
+    let reciprocalLatticeVectors = [aStar, bStar, cStar];
+    console.log("Reciprocal Lattice Vectors (a*, b*, c*):", reciprocalLatticeVectors);
+
+    // --- Calculate Structure Factors for all planes ---
+    const millerIndicesRangeH = [-5, 5];
+    const millerIndicesRangeK = [-5, 5];
+    const millerIndicesRangeL = [-25, 25];
 
     const listofPlanes = [];
-    const structureFactors = {};
-    const structureFactorMagnitudes = [];
+    const structureFactors = {}; // Stores { "h,k,l": magnitude }
+    const structureFactorMagnitudes = []; // Stores magnitudes in order for dataPoints
 
-    for (let h = -h_range; h <= h_range; h++) {
-        for (let k = -k_range; k <= k_range; k++) {
-            for (let l = -l_range; l <= l_range; l++) {
+    for (let h = millerIndicesRangeH[0]; h <= millerIndicesRangeH[1]; h++) {
+        for (let k = millerIndicesRangeK[0]; k <= millerIndicesRangeK[1]; k++) {
+            for (let l = millerIndicesRangeL[0]; l <= millerIndicesRangeL[1]; l++) {
                 listofPlanes.push([h, k, l]);
 
                 let F_re = 0;
@@ -248,93 +113,126 @@ export function performCrystallographicAnalysis(parsedData, zoneAxisStr, showMes
                 });
 
                 const magnitude = Math.sqrt(F_re ** 2 + F_im ** 2);
-                structureFactors[`${h},${k},${l}`] = magnitude; //only storing and plotting magnitude |F|; maybe store |F|^2 instead?
+                structureFactors[`${h},${k},${l}`] = magnitude;
                 structureFactorMagnitudes.push(magnitude);
             }
         }
     }
-    // console.log("Calculated Structure Factors:", structureFactors);
+    console.log("Calculated Structure Factors:", structureFactors);
 
-    // Prepare the data for plotting
-    let zoneAxis = zoneAxisStr.split(',').map(Number);
-    // Incorrect/wrong format input.
-    if (zoneAxis.length !== 3 || zoneAxis.some(isNaN) || zoneAxis.every(val => val === 0)) {
-        console.warn("Invalid or zero Miller plane input, defaulting to [1,0,0].");
-        zoneAxis = [1, 0, 0];
-        zoneAxisStr = "1,0,0"; // Update string if default is used
+    // --- Visualization Data Preparation ---
+    let inputPlane = inputPlaneStr.split('').map(Number); // Convert string "120" to [1,2,0]
+
+    if (inputPlane.length !== 3 || inputPlane.some(isNaN)) {
+        console.warn("Invalid plane input, defaulting to [1,2,0]");
+        inputPlane = [1, 2, 0];
     }
 
     // Calculate the reciprocal lattice vector G_hkl which is normal to the (hkl) plane
     const g_hkl = [
-        zoneAxis[0] * aStar[0] + zoneAxis[1] * bStar[0] + zoneAxis[2] * cStar[0],
-        zoneAxis[0] * aStar[1] + zoneAxis[1] * bStar[1] + zoneAxis[2] * cStar[1],
-        zoneAxis[0] * aStar[2] + zoneAxis[1] * bStar[2] + zoneAxis[2] * cStar[2]
+        inputPlane[0] * aStar[0] + inputPlane[1] * bStar[0] + inputPlane[2] * cStar[0],
+        inputPlane[0] * aStar[1] + inputPlane[1] * bStar[1] + inputPlane[2] * cStar[1],
+        inputPlane[0] * aStar[2] + inputPlane[1] * bStar[2] + inputPlane[2] * cStar[2]
     ];
     const normalPlaneVector = normalizeVector(g_hkl);
-    // console.log("Normal vector to desired plane:", normalPlaneVector);
+    console.log("Normal vector to desired plane:", normalPlaneVector);
 
     // Create a new orthogonal basis for projection: xVector, yVector, and normalPlaneVector
-    const dummyVector = Math.abs(normalPlaneVector[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    const dummyVector = Math.abs(normalPlaneVector[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0]; // Choose a dummy vector not parallel to normal
     let yVector = crossProduct(dummyVector, normalPlaneVector);
     yVector = normalizeVector(yVector);
-    let xVector = crossProduct(normalPlaneVector, yVector);
+    let xVector = crossProduct(normalPlaneVector, yVector); // x = n x y (forms a right-handed system)
     xVector = normalizeVector(xVector);
 
-    // Project reciprocal lattice points onto this new basis for 2D diffraction plot
+    // Project reciprocal lattice points (from listofPlanes) onto this new basis
     const projectedCoords = listofPlanes.map(([h,k,l]) => {
+        // Each [h,k,l] represents a reciprocal lattice vector G = h*a* + k*b* + l*c*
         const gVec = [
             h * aStar[0] + k * bStar[0] + l * cStar[0],
             h * aStar[1] + k * bStar[1] + l * cStar[1],
             h * aStar[2] + k * bStar[2] + l * cStar[2]
         ];
+        // Project gVec onto xVector and yVector for the 2D plot
         return [
             dotProduct(gVec, xVector), // X-coordinate in the new basis
             dotProduct(gVec, yVector), // Y-coordinate in the new basis
             dotProduct(gVec, normalPlaneVector) // Z-coordinate (component along the normal)
         ];
     });
-    // console.log("Projected Reciprocal Space Coordinates:", projectedCoords);
+    console.log("Projected Reciprocal Space Coordinates:", projectedCoords);
 
     // Prepare data for diffraction pattern visualization
     let diffractionDataPoints = [];
     projectedCoords.forEach((coords, index) => {
         const magnitude = structureFactorMagnitudes[index];
-        // Ensure h,k,l are not all zero and have some intensity
-        if (magnitude > 0.001 || (listofPlanes[index][0] === 0 && listofPlanes[index][1] === 0 && listofPlanes[index][2] === 0 && magnitude > 0)) {
+        if (magnitude > 0.001) { // Filter out very weak reflections
             diffractionDataPoints.push({
                 x: coords[0],
                 y: coords[1],
-                label: listofPlanes[index].join(','),
-                markerSize: (magnitude / (Math.max(...structureFactorMagnitudes) || 1)) * 10 + 5 // Scale marker size dynamically, min size 5
+                label: listofPlanes[index].join(','), // Label with h,k,l
+                markerSize: (magnitude / 5) ** 2 // Scale marker size by (SF / constant)^2
             });
         }
     });
-    // console.log("Diffraction Data Points:", diffractionDataPoints);
+    console.log("Diffraction Data Points:", diffractionDataPoints);
 
-
-    // --- Plot Crystal Structure ---
-    const atomCoordByElement = {};
+    // --- Plotly for Crystal Structure ---
+    const atomsType1X = [];
+    const atomsType1Y = [];
+    const atomsType1Z = [];
+    const atomsType2X = [];
+    const atomsType2Y = [];
+    const atomsType2Z = [];
 
     atomPositions.forEach(atom => {
-        // For plotting, we scale fractional coordinates by cell lengths for a better visual representation
-        // (though Plotly also handles fractional directly, this makes atoms appear in correct relative scale)
-        const x_cart = atom.x * a_vec_cart[0] + atom.y * b_vec_cart[0] + atom.z * c_vec_cart[0];
-        const y_cart = atom.x * a_vec_cart[1] + atom.y * b_vec_cart[1] + atom.z * c_vec_cart[1];
-        const z_cart = atom.x * a_vec_cart[2] + atom.y * b_vec_cart[2] + atom.z * c_vec_cart[2];
-
-        if (!atomCoordByElement[atom.label]) {
-            atomCoordByElement[atom.label] = { x: [], y: [], z: [] };
+        if (atom.label === element1) {
+            atomsType1X.push(atom.x);
+            atomsType1Y.push(atom.y);
+            atomsType1Z.push(atom.z);
+        } else if (atom.label === element2) {
+            atomsType2X.push(atom.x);
+            atomsType2Y.push(atom.y);
+            atomsType2Z.push(atom.z);
         }
-        atomCoordByElement[atom.label].x.push(x_cart);
-        atomCoordByElement[atom.label].y.push(y_cart);
-        atomCoordByElement[atom.label].z.push(z_cart);
     });
 
-    const markerSize = 15; // Increased marker size for solid balls
-    const { a, b, c, alpha, beta, gamma } = cellParameters;
+    const traceType1 = {
+        x: atomsType1X,
+        y: atomsType1Y,
+        z: atomsType1Z,
+        mode: 'markers',
+        marker: {
+            size: 12,
+            line: {
+                color: 'rgba(65, 192, 234, 0.14)',
+                width: 0.5
+            },
+            opacity: 0.8
+        },
+        type: 'scatter3d',
+        name: element1 || 'Element 1'
+    };
+
+    const traceType2 = {
+        x: atomsType2X,
+        y: atomsType2Y,
+        z: atomsType2Z,
+        mode: 'markers',
+        marker: {
+            size: 12,
+            line: {
+                color: 'rgba(217, 217, 217, 0.14)',
+                width: 0.5
+            },
+            opacity: 0.8
+        },
+        type: 'scatter3d',
+        name: element2 || 'Element 2'
+    };
+
     const plotlyLayout = {
         title: {
-            text: `Crystal Structure (Zone axis: ${zoneAxisStr})<br>Space Group: ${spaceGroupName}`
+            text: `Crystal Structure (${inputPlaneStr} plane normal)<br>Space Group: ${spaceGroupName}`
         },
         legend: {
             font: {
@@ -342,73 +240,26 @@ export function performCrystallographicAnalysis(parsedData, zoneAxisStr, showMes
             }
         },
         scene: {
-            aspectmode: 'data', // Ensures aspect ratio is based on actual data
-            camera: cameraState || {
-                projection: {
-                    type: 'orthographic' 
-                },
-                // Initial camera eye is set to look along the normal, as before.
-                // This will be overridden by user interaction once plot loads.
+            xaxis: { title: 'X (fractional)' },
+            yaxis: { title: 'Y (fractional)' },
+            zaxis: { title: 'Z (fractional)' },
+            camera: {
                 eye: {
-                    x: normalPlaneVector[0] * 2,
+                    x: normalPlaneVector[0] * 2, // Position camera further out along the normal
                     y: normalPlaneVector[1] * 2,
                     z: normalPlaneVector[2] * 2
                 },
-                center: {
-                    x: 0,
-                    y: 0,
-                    z: 0
-                },
                 up: {
-                    x: 0,
-                    y: 0,
-                    z: 1
+                    x: xVector[0], // Align 'up' with one of the in-plane vectors
+                    y: xVector[1],
+                    z: xVector[2]
                 }
-                // up: {
-                //     x: xVector[0],
-                //     y: xVector[1],
-                //     z: xVector[2]
-                // }
-            },
-
-            xaxis: { visible: false }, // Use Angstroms for axis labels
-            yaxis: { visible: false },
-            zaxis: { visible: false },
-        },
-        // Prevent Plotly from showing specific modes by default, but allow full screen, etc.
-        modebar: {
-            remove: ['zoom3d', 'pan3d', 'hoverClosest3d', 'hoverCompare3d']
+            }
         }
     };
 
-    // const plotlyData = [traceType1, traceType2].filter(trace => trace.x.length > 0);
-    const traceColors = ['rgba(65, 192, 234, 1.0)', 'rgba(217, 217, 217, 1.0)', 'rgba(255, 99, 132, 1.0)', 'rgba(0, 200, 83, 1.0)'];
-
-    const plotlyData = elements.map((entry, index) => {
-        const label = entry.element;
-        const coords = atomCoordByElement[label] || { x: [], y: [], z: [] };
-        return {
-            x: coords.x,
-            y: coords.y,
-            z: coords.z,
-            mode: 'markers',
-            marker: {
-                size: markerSize,
-                color: traceColors[index % traceColors.length],
-                opacity: 1.0,
-                line: {
-                    color: 'rgba(0, 0, 0, 0.1)',
-                    width: 0.5
-                }
-            },
-            type: 'scatter3d',
-            name: label
-        };
-    }).filter(trace => trace.x.length > 0);
-
-    // Use Plotly.react to efficiently update the plot without re-creating it from scratch
-    Plotly.react('structureCanvas', plotlyData, plotlyLayout);
-
+    const plotlyData = [traceType1, traceType2].filter(trace => trace.x.length > 0);
+    Plotly.newPlot('structureCanvas', plotlyData, plotlyLayout, { displayModeBar: false });
 
     // --- CanvasJS for Diffraction Pattern ---
     const canvasjsChart = new CanvasJS.Chart("diffractionCanvas", {
@@ -416,22 +267,22 @@ export function performCrystallographicAnalysis(parsedData, zoneAxisStr, showMes
             gridThickness: 0,
             lineThickness: 1,
             tickThickness: 0,
-            minimum: -1.0, // May need to adjust based on range of reciprocal space points
+            minimum: -1.0,
             maximum: 1.0,
-            labelFormatter: function() { return ""; } // No labels
+            labelFormatter: function() { return ""; }
         },
         axisY: {
             gridThickness: 0,
             lineThickness: 1,
             tickThickness: 0,
-            minimum: -1.0, // May need to adjust
+            minimum: -1.0,
             maximum: 1.0,
-            labelFormatter: function() { return ""; } // No labels
+            labelFormatter: function() { return ""; }
         },
         title: {
-            text: `Diffraction Pattern; Zone axis: (${zoneAxisStr})`,
+            text: `Diffraction Pattern for (${inputPlaneStr}) plane`,
             fontFamily: 'tahoma',
-            fontSize: 20
+            fontSize: 30
         },
         data: [{
             type: "scatter",
@@ -439,7 +290,8 @@ export function performCrystallographicAnalysis(parsedData, zoneAxisStr, showMes
             toolTipContent: "({label})<br/>Intensity: {markerSize}",
             dataPoints: diffractionDataPoints,
             marker: {
-                type: "circle"
+                type: "circle",
+                size: 8
             }
         }]
     });
